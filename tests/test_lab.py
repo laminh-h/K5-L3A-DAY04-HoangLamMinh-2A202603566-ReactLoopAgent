@@ -61,7 +61,25 @@ class LoopTests(unittest.TestCase):
         fake = FakeProvider([tool_call('call-2', 'get_status', '{'), final()])
         result = run_agent('kiểm tra', fake, StatusTools())
         self.assertEqual(result['status'], 'completed')
-        self.assertEqual(json.loads(fake.histories[1][-1]['content'])['error'], 'INVALID_ARGUMENTS')
+        observation = next(m for m in reversed(fake.histories[1]) if m['role'] == 'tool')
+        self.assertEqual(json.loads(observation['content'])['error'], 'INVALID_ARGUMENTS')
+    def test_timeout_reminder_disallows_unsupported_provider_status(self):
+        fake = FakeProvider([tool_call('timeout', 'get_status', '{"provider":"cloudflare"}'), final()])
+        result = run_agent('Kiểm tra Cloudflare', fake, StatusTools(fail=True))
+        self.assertEqual(result['status'], 'completed')
+        observation = next(m for m in reversed(fake.histories[1]) if m['role'] == 'tool')
+        self.assertEqual(json.loads(observation['content'])['error'], 'TimeoutError')
+        self.assertIn('not evidence that the provider is operational or down', fake.histories[1][-1]['content'])
+    def test_historical_claim_is_revised_when_requested_year_is_not_observed(self):
+        fake = FakeProvider([
+            tool_call('history', 'get_status', '{"provider":"github","component":"Actions"}'),
+            final('The recent-incident data does not establish whether incidents occurred in 2025.'),
+        ])
+        result = run_agent('List all GitHub Actions incidents in 2025.', fake, StatusTools(), max_steps=4)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['answer'], 'The recent-incident data does not establish whether incidents occurred in 2025.')
+        self.assertTrue(any(event['event'] == 'validation_limited_history' for event in result['trace']))
+        self.assertIn('Do not claim that no incidents occurred', fake.histories[1][-1]['content'])
     def test_max_steps(self):
         fake = FakeProvider([tool_call('a', 'get_status', '{"provider":"github"}')])
         self.assertEqual(run_agent('x', fake, StatusTools(), 1)['status'], 'max_steps')

@@ -38,8 +38,18 @@ class BonusAgentTests(unittest.TestCase):
         p=ScriptedProvider([call('a','get_vercel_status',{}),call('b','get_vercel_status',{}),final()])
         result=run_agent('Kiểm tra',p,t,max_steps=5)
         self.assertEqual(result['status'],'completed')
-        self.assertEqual(json.loads(p.histories[1][-1]['content'])['error'],'RATE_LIMITED')
+        observation=next(m for m in reversed(p.histories[1]) if m['role']=='tool')
+        self.assertEqual(json.loads(observation['content'])['error'],'RATE_LIMITED')
         self.assertEqual(json.loads(p.histories[2][-1]['content'])['provider'],'vercel')
+    def test_persistent_429_has_a_bounded_retry_count(self):
+        t=BonusTools(scenario='rate_limit_always')
+        p=ScriptedProvider([call(str(i),'get_vercel_status',{}) for i in range(4)]+[final()])
+        result=run_agent('Kiểm tra',p,t,max_steps=5)
+        tool_events=[item for item in result['trace'] if item['event']=='tool']
+        self.assertEqual(result['status'],'completed')
+        self.assertEqual(t.calls[('get_vercel_status','vercel')],3)
+        self.assertEqual(len(tool_events),4)
+        self.assertFalse(tool_events[-1]['result']['retriable'])
     def test_invalid_arguments_observation_returns_to_model(self):
         t=BonusTools()
         bad={'provider':'npm','incident_id':'cc0t2r4403sy','offset':'zero'}
@@ -48,7 +58,8 @@ class BonusAgentTests(unittest.TestCase):
         p=ScriptedProvider([call('a','get_incident_details',bad),call('b','get_incident_details',good),final('Nguồn: '+details['url'])])
         result=run_agent('Kiểm tra',p,t,max_steps=5)
         self.assertEqual(result['status'],'completed')
-        self.assertEqual(json.loads(p.histories[1][-1]['content'])['error'],'INVALID_ARGUMENTS')
+        observation=next(m for m in reversed(p.histories[1]) if m['role']=='tool')
+        self.assertEqual(json.loads(observation['content'])['error'],'INVALID_ARGUMENTS')
         self.assertTrue(json.loads(p.histories[2][-1]['content'])['ok'])
 
 if __name__=='__main__': unittest.main()
